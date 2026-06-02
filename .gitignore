@@ -1,0 +1,22 @@
+# Database
+hydrao.db
+hydrao.db-shm
+hydrao.db-wal
+
+# Logs
+hydrao.log
+hydrao.log.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# IA Tools
+.claude/
