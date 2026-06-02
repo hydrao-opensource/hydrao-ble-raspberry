@@ -1,0 +1,29 @@
+meta {
+  name: Set Allowed Devices
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/devices/allowed
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "addresses": ["AA:BB:CC:DD:EE:FF"]
+  }
+}
+
+docs {
+  Définit la liste des adresses BLE autorisées à être collectées.
+  Passer une liste vide désactive le filtre (tous les appareils HYDRAO sont acceptés).
+
+  Exemple pour désactiver le filtre :
+  { "addresses": [] }
+}

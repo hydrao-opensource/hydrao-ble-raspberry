@@ -1,0 +1,516 @@
+openapi: 3.0.3
+info:
+  title: HYDRAO BLE Collector API
+  version: 1.0.0
+  description: |
+    API REST exposée par le collecteur BLE HYDRAO tournant sur Raspberry Pi (ou Mac).
+
+    Le collecteur scanne en continu les appareils HYDRAO à proximité via Bluetooth Low Energy,
+    stocke les données de douche en base SQLite et les expose via cette API.
+
+    **WebSocket** : un endpoint `/ws/live` pousse un snapshot de tous les appareils toutes les 2 secondes
+    (non représentable en OpenAPI REST — voir la section dédiée ci-dessous).
+
+    **Note sur `device_id`** : sur macOS/CoreBluetooth, l'identifiant est un UUID (ex. `13F2BAB0-FFC2-E334-80B3-7D309FE16210`) ;
+    sur Linux/BlueZ, c'est une adresse MAC (ex. `AA:BB:CC:DD:EE:FF`).
+
+servers:
+  - url: http://localhost:9090
+    description: Développement local (Mac)
+  - url: http://raspberrypi.local:8080
+    description: Raspberry Pi (mDNS)
+
+tags:
+  - name: Devices
+    description: Gestion et consultation des appareils HYDRAO détectés
+  - name: Showers
+    description: Historique des douches enregistrées par appareil
+  - name: Live
+    description: Données en temps réel de la douche en cours
+
+paths:
+
+  /devices:
+    get:
+      operationId: listDevices
+      summary: Lister tous les appareils
+      description: Retourne tous les appareils HYDRAO vus depuis le démarrage du collecteur, triés par dernière activité.
+      tags: [Devices]
+      responses:
+        "200":
+          description: Liste des appareils
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceListResponse"
+              example:
+                allowed_filter_active: true
+                allowed_addresses:
+                  - "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                devices:
+                  - id: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                    uuid: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                    name: "HYDRAO_SHOWER"
+                    type: "aloe"
+                    hw_version: 8
+                    fw_version: "3.2.1"
+                    calibration: 545
+                    threshold:
+                      - color: "#00FF00"
+                        liter: 5.0
+                      - color: "#0000FF"
+                        liter: 10.0
+                      - color: "#FF00FF"
+                        liter: 15.0
+                      - color: "#FF0000"
+                        liter: 20.0
+                    first_seen: "2024-01-15T08:00:00"
+                    last_seen: "2024-01-20T07:45:00"
+                    last_rssi: -62
+                    last_sync_min_index: 0
+                    last_sync_max_index: 42
+                    last_sync_date: "2024-01-20T07:45:00"
+                    is_last_sync_complete: true
+                    live:
+                      volume: 0
+                      flow: null
+                      duration: null
+                      temperature: null
+                      date: null
+
+  /devices/allowed:
+    put:
+      operationId: setAllowedDevices
+      summary: Définir la liste blanche d'appareils
+      description: |
+        Remplace la liste des adresses BLE autorisées à être collectées.
+        Le scanner prend en compte le changement immédiatement sans redémarrage.
+
+        Passer une liste vide `[]` désactive le filtre : tous les appareils HYDRAO sont alors acceptés.
+      tags: [Devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllowedDevicesPayload"
+            examples:
+              filter_actif:
+                summary: Autoriser un seul appareil
+                value:
+                  addresses:
+                    - "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+              sans_filtre:
+                summary: Désactiver le filtre
+                value:
+                  addresses: []
+      responses:
+        "200":
+          description: Liste mise à jour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllowedDevicesResponse"
+
+  /devices/{device_id}/showers:
+    get:
+      operationId: getShowers
+      summary: Historique des douches d'un appareil
+      description: Retourne les douches enregistrées pour l'appareil, triées par date décroissante.
+      tags: [Showers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: limit
+          in: query
+          description: Nombre maximum de douches retournées
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 500
+        - name: offset
+          in: query
+          description: Décalage pour la pagination
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: Liste des douches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShowerListResponse"
+              example:
+                device_id: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                limit: 50
+                offset: 0
+                showers:
+                  - id: 42
+                    device_id: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                    volume: 12
+                    temperature: 38.5
+                    flow: 8.2
+                    duration: 87.8
+                    soaping_time: 24
+                    date: "2024-01-20T07:32:00"
+                    threshold:
+                      - color: "#00FF00"
+                        liter: 5.0
+                    is_empty: false
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /devices/{device_id}/live:
+    get:
+      operationId: getLive
+      summary: Données live d'un appareil
+      description: |
+        Retourne les dernières données mesurées pendant la douche en cours (ou la dernière douche).
+        Si aucune douche n'est en cours, `volume` est `0` et les autres champs sont `null`.
+
+        Pour un flux continu toutes les 2 secondes, utiliser le WebSocket `/ws/live`.
+      tags: [Live]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Données live
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveResponse"
+              examples:
+                en_cours:
+                  summary: Douche en cours
+                  value:
+                    device_id: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                    live:
+                      volume: 7
+                      flow: 8.4
+                      duration: 51.2
+                      temperature: 39.1
+                      date: "2024-01-20T07:33:51"
+                au_repos:
+                  summary: Pas de douche en cours
+                  value:
+                    device_id: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+                    live:
+                      volume: 0
+                      flow: null
+                      duration: null
+                      temperature: null
+                      date: null
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+
+  parameters:
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      description: |
+        Identifiant unique de l'appareil.
+        UUID CoreBluetooth sur macOS (ex. `13F2BAB0-FFC2-E334-80B3-7D309FE16210`)
+        ou adresse MAC sur Linux (ex. `AA:BB:CC:DD:EE:FF`).
+      schema:
+        type: string
+      example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+
+  responses:
+    NotFound:
+      description: Appareil introuvable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            detail: "Device not found"
+
+  schemas:
+
+    Threshold:
+      type: object
+      description: Seuil de consommation avec couleur LED associée
+      required: [color, liter]
+      properties:
+        color:
+          type: string
+          description: Couleur en hexadécimal RGB
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          example: "#00FF00"
+        liter:
+          type: number
+          format: float
+          description: Volume en litres déclenchant ce seuil
+          example: 5.0
+
+    LiveData:
+      type: object
+      description: État de la douche en temps réel
+      required: [volume]
+      properties:
+        volume:
+          type: integer
+          description: Volume cumulé depuis le début de la douche (litres)
+          example: 7
+        flow:
+          type: number
+          format: float
+          nullable: true
+          description: Débit instantané (L/min)
+          example: 8.4
+        duration:
+          type: number
+          format: float
+          nullable: true
+          description: Durée de la douche en cours (secondes)
+          example: 51.2
+        temperature:
+          type: number
+          format: float
+          nullable: true
+          description: Température de l'eau (°C)
+          example: 39.1
+        date:
+          type: string
+          nullable: true
+          description: Horodatage de la dernière mise à jour
+          example: "2024-01-20T07:33:51"
+
+    Device:
+      type: object
+      description: Appareil HYDRAO détecté par le collecteur BLE
+      required: [id, name, type, calibration, is_last_sync_complete, live]
+      properties:
+        id:
+          type: string
+          description: Identifiant BLE (UUID CoreBluetooth ou adresse MAC)
+          example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+        uuid:
+          type: string
+          nullable: true
+          description: UUID CoreBluetooth (identique à id sur macOS)
+          example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+        name:
+          type: string
+          description: Nom BLE diffusé par l'appareil
+          example: "HYDRAO_SHOWER"
+        type:
+          type: string
+          description: Modèle de pommeau détecté
+          enum: [aloe, cereus, yucca, first, mixer, unknown]
+          example: "aloe"
+        hw_version:
+          type: integer
+          nullable: true
+          description: Version matérielle
+          example: 8
+        fw_version:
+          type: string
+          nullable: true
+          description: Version firmware
+          example: "3.2.1"
+        calibration:
+          type: integer
+          description: Facteur de calibration du débitmètre (défaut 545)
+          example: 545
+        threshold:
+          type: array
+          nullable: true
+          description: Seuils de couleur configurés sur l'appareil
+          items:
+            $ref: "#/components/schemas/Threshold"
+        first_seen:
+          type: string
+          nullable: true
+          description: Date de première détection
+          example: "2024-01-15T08:00:00"
+        last_seen:
+          type: string
+          nullable: true
+          description: Date de dernière détection
+          example: "2024-01-20T07:45:00"
+        last_rssi:
+          type: integer
+          nullable: true
+          description: Dernier niveau de signal BLE (dBm)
+          example: -62
+        last_sync_min_index:
+          type: integer
+          nullable: true
+          description: Index minimum de la dernière synchronisation
+          example: 0
+        last_sync_max_index:
+          type: integer
+          nullable: true
+          description: Index maximum de la dernière synchronisation
+          example: 42
+        last_sync_date:
+          type: string
+          nullable: true
+          description: Date de la dernière synchronisation
+          example: "2024-01-20T07:45:00"
+        is_last_sync_complete:
+          type: boolean
+          description: Indique si la dernière synchronisation s'est terminée sans erreur
+          example: true
+        live:
+          $ref: "#/components/schemas/LiveData"
+
+    Shower:
+      type: object
+      description: Douche enregistrée
+      required: [id, device_id, volume, date, is_empty]
+      properties:
+        id:
+          type: integer
+          description: Index de la douche (issu du firmware, ou décalé de 100 000 pour les douches live)
+          example: 42
+        device_id:
+          type: string
+          description: Identifiant BLE de l'appareil
+          example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+        volume:
+          type: integer
+          description: Volume consommé (litres)
+          example: 12
+        temperature:
+          type: number
+          format: float
+          nullable: true
+          description: Température moyenne de l'eau (°C) — null si capteur absent
+          example: 38.5
+        flow:
+          type: number
+          format: float
+          nullable: true
+          description: Débit moyen (L/min)
+          example: 8.2
+        duration:
+          type: number
+          format: float
+          nullable: true
+          description: Durée de la douche (secondes, calculée)
+          example: 87.8
+        soaping_time:
+          type: integer
+          nullable: true
+          description: Temps de savonnage détecté (secondes, 0–180)
+          example: 24
+        date:
+          type: string
+          description: Date et heure de la douche
+          example: "2024-01-20T07:32:00"
+        threshold:
+          type: array
+          nullable: true
+          description: Snapshot des seuils au moment de la douche
+          items:
+            $ref: "#/components/schemas/Threshold"
+        is_empty:
+          type: boolean
+          description: True si la douche a été ignorée (volume trop faible)
+          example: false
+
+    DeviceListResponse:
+      type: object
+      required: [devices, allowed_filter_active, allowed_addresses]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+        allowed_filter_active:
+          type: boolean
+          description: True si un filtre d'adresses est actif
+          example: true
+        allowed_addresses:
+          type: array
+          description: Adresses actuellement dans la liste blanche (vide = pas de filtre)
+          items:
+            type: string
+          example:
+            - "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+
+    AllowedDevicesPayload:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          description: Adresses BLE à autoriser. Liste vide = désactiver le filtre.
+          items:
+            type: string
+          example:
+            - "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+
+    AllowedDevicesResponse:
+      type: object
+      required: [allowed_addresses]
+      properties:
+        allowed_addresses:
+          type: array
+          description: Adresses désormais actives dans la liste blanche
+          items:
+            type: string
+          example:
+            - "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+
+    ShowerListResponse:
+      type: object
+      required: [device_id, showers, limit, offset]
+      properties:
+        device_id:
+          type: string
+          example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+        showers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shower"
+        limit:
+          type: integer
+          example: 50
+        offset:
+          type: integer
+          example: 0
+
+    LiveResponse:
+      type: object
+      required: [device_id, live]
+      properties:
+        device_id:
+          type: string
+          example: "13F2BAB0-FFC2-E334-80B3-7D309FE16210"
+        live:
+          $ref: "#/components/schemas/LiveData"
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          example: "Device not found"
+
+  # WebSocket — non représentable en OpenAPI REST
+  # Endpoint : ws://<host>:<port>/ws/live
+  # Protocole : connexion persistante, push serveur toutes les 2 secondes
+  # Message JSON émis :
+  # {
+  #   "devices": [
+  #     {
+  #       "id": "<device_id>",
+  #       "name": "<name>",
+  #       "live": {
+  #         "volume": 7,
+  #         "flow": 8.4,
+  #         "temperature": 39.1,
+  #         "date": "2024-01-20T07:33:51"
+  #       }
+  #     }
+  #   ]
+  # }

@@ -1,0 +1,17 @@
+meta {
+  name: Get Live Data
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/devices/{{device_id}}/live
+  body: none
+  auth: none
+}
+
+docs {
+  Retourne les dernières données live (volume, débit, durée, température)
+  pour un appareil donné.
+  Modifier {{device_id}} dans l'environnement ou directement dans l'URL.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Get Showers
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/devices/{{device_id}}/showers
+  body: none
+  auth: none
+}
+
+query {
+  limit: 50
+  offset: 0
+}
+
+docs {
+  Retourne les douches enregistrées pour un appareil.
+  Modifier {{device_id}} dans l'environnement ou directement dans l'URL.
+
+  Paramètres :
+  - limit  : nombre de résultats (défaut 50)
+  - offset : pagination (défaut 0)
+}

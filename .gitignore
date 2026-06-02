@@ -20,3 +20,6 @@ __pycache__/
 
 # IA Tools
 .claude/
+
+# OS Files
+**/.DS_Store

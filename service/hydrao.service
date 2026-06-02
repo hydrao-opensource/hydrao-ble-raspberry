@@ -1,0 +1,22 @@
+[Unit]
+Description=HYDRAO BLE Gateway
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+SupplementaryGroups=bluetooth
+WorkingDirectory=/home/pi/hydrao-ble-raspberry
+ExecStart=/home/pi/hydrao-ble-raspberry/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hydrao
+
+# Give the BLE adapter time to be ready after boot
+ExecStartPre=/bin/sleep 5
+
+[Install]
+WantedBy=multi-user.target
